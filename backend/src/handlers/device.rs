@@ -2,9 +2,10 @@
 //! 处理设备注册、查询、更新、删除
 
 use crate::error::{AppError, Result};
+use crate::services::auth_service::Claims;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, State, Extension},
     Json,
 };
 use chrono::Utc;
@@ -32,12 +33,13 @@ pub struct RegisterDeviceRequest {
 /// 注册新设备
 pub async fn register(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<RegisterDeviceRequest>,
 ) -> Result<Json<DeviceResponse>> {
     let now = Utc::now();
 
     let new_device = crate::db::schema::device::ActiveModel {
-        user_id: Set(1), // TODO: 从 JWT 获取用户 ID
+        user_id: Set(claims.sub),
         device_name: Set(req.device_name),
         device_key: Set(req.device_key),
         last_seen_at: Set(now),
@@ -56,9 +58,12 @@ pub async fn register(
 }
 
 /// 列出用户的所有设备
-pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<DeviceResponse>>> {
+pub async fn list(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<DeviceResponse>>> {
     let devices = Devices::find()
-        .filter(crate::db::schema::device::Column::UserId.eq(1)) // TODO: 从 JWT 获取用户 ID
+        .filter(crate::db::schema::device::Column::UserId.eq(claims.sub))
         .all(&state.db)
         .await?;
 
@@ -78,12 +83,18 @@ pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<DeviceR
 /// 获取设备详情
 pub async fn get(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> Result<Json<DeviceResponse>> {
     let device = Devices::find_by_id(id)
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound("设备不存在".to_string()))?;
+
+    // 验证设备属于当前用户
+    if device.user_id != claims.sub {
+        return Err(AppError::Forbidden("无权访问此设备".to_string()));
+    }
 
     Ok(Json(DeviceResponse {
         id: device.id,
@@ -96,6 +107,7 @@ pub async fn get(
 /// 删除设备
 pub async fn delete(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>> {
     let device = Devices::find_by_id(id)
@@ -103,7 +115,12 @@ pub async fn delete(
         .await?
         .ok_or_else(|| AppError::NotFound("设备不存在".to_string()))?;
 
-    let mut active_model: crate::db::schema::device::ActiveModel = device.into();
+    // 验证设备属于当前用户
+    if device.user_id != claims.sub {
+        return Err(AppError::Forbidden("无权删除此设备".to_string()));
+    }
+
+    let active_model: crate::db::schema::device::ActiveModel = device.into();
     active_model.delete(&state.db).await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
@@ -117,6 +134,7 @@ pub struct UpdateNameRequest {
 /// 更新设备名称
 pub async fn update_name(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
     Json(req): Json<UpdateNameRequest>,
 ) -> Result<Json<DeviceResponse>> {
@@ -124,6 +142,11 @@ pub async fn update_name(
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound("设备不存在".to_string()))?;
+
+    // 验证设备属于当前用户
+    if device.user_id != claims.sub {
+        return Err(AppError::Forbidden("无权更新此设备".to_string()));
+    }
 
     let mut active_model: crate::db::schema::device::ActiveModel = device.into();
     active_model.device_name = Set(req.name.clone());

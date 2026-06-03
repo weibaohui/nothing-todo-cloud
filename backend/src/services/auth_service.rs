@@ -3,6 +3,19 @@
 
 use crate::db::DbConn;
 
+/// JWT Claims 结构
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Claims {
+    /// 用户 ID
+    pub sub: i64,
+    /// 设备 ID（可选）
+    pub device_id: Option<i64>,
+    /// Token 类型：access / refresh
+    pub token_type: String,
+    /// 过期时间
+    pub exp: usize,
+}
+
 /// 生成 JWT Token
 pub fn generate_token(
     user_id: i64,
@@ -18,7 +31,7 @@ pub fn generate_token(
         .expect("valid timestamp")
         .timestamp() as usize;
 
-    let claims = crate::middleware::auth::Claims {
+    let claims = Claims {
         sub: user_id,
         device_id,
         token_type: "access".to_string(),
@@ -36,10 +49,10 @@ pub fn generate_token(
 pub fn verify_token(
     token: &str,
     secret: &str,
-) -> Result<crate::middleware::auth::Claims, jsonwebtoken::errors::Error> {
+) -> Result<Claims, jsonwebtoken::errors::Error> {
     use jsonwebtoken::{decode, DecodingKey, Validation};
 
-    let token_data = decode::<crate::middleware::auth::Claims>(
+    let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
         &Validation::default(),

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Row, Col, Statistic, Table } from 'antd';
+import { Card, Row, Col, Statistic } from 'antd';
 import { UserOutlined, LaptopOutlined, SwapOutlined } from '@ant-design/icons';
 import { admin } from '../api/client';
 

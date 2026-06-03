@@ -2,9 +2,10 @@
 //! 处理 API Token 的创建、列表、撤销
 
 use crate::error::{AppError, Result};
+use crate::services::auth_service::Claims;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, State, Extension},
     Json,
 };
 use chrono::Utc;
@@ -31,9 +32,12 @@ pub struct CreateTokenRequest {
 }
 
 /// 列出所有 Token
-pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<TokenResponse>>> {
+pub async fn list(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<TokenResponse>>> {
     let tokens = ApiTokens::find()
-        .filter(TokenColumn::UserId.eq(1)) // TODO: 从 JWT 获取用户 ID
+        .filter(TokenColumn::UserId.eq(claims.sub))
         .all(&state.db)
         .await?;
 
@@ -54,17 +58,18 @@ pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<TokenRe
 /// 创建新 Token
 pub async fn create(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<CreateTokenRequest>,
 ) -> Result<Json<TokenResponse>> {
     // 生成随机 Token
     let raw_token = format!("ntd_{}", Uuid::new_v4());
     let token_hash = hash_token(&raw_token);
 
-    tracing::info!("创建新 Token: {}", req.name);
+    tracing::info!("创建新 Token: {} for user {}", req.name, claims.sub);
 
     let now = Utc::now();
     let new_token = crate::db::schema::api_token::ActiveModel {
-        user_id: Set(1), // TODO: 从 JWT 获取用户 ID
+        user_id: Set(claims.sub),
         name: Set(req.name.clone()),
         token_hash: Set(token_hash),
         created_at: Set(now),
@@ -85,12 +90,18 @@ pub async fn create(
 /// 撤销 Token
 pub async fn revoke(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>> {
     let token = ApiTokens::find_by_id(id)
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::NotFound("Token 不存在".to_string()))?;
+
+    // 验证 Token 属于当前用户
+    if token.user_id != claims.sub {
+        return Err(AppError::Forbidden("无权撤销此 Token".to_string()));
+    }
 
     let active_model: crate::db::schema::api_token::ActiveModel = token.into();
     active_model.delete(&state.db).await?;

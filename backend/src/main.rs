@@ -14,6 +14,7 @@ use axum::{
     Router,
     response::IntoResponse,
 };
+use axum::middleware as axum_middleware;
 use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::state::AppState;
+use crate::middleware::auth::auth_middleware;
 
 /// 前端静态文件嵌入
 #[derive(Embed)]
@@ -111,31 +113,34 @@ fn build_app(state: Arc<AppState>) -> Router {
     // CORS 配置
     let cors = CorsLayer::permissive();
 
-    Router::new()
-        // 健康检查
+    // 公开路由（无需认证）
+    let public_routes = Router::new()
         .route("/health", get(handlers::health))
-        // 认证相关
         .route("/api/auth/register", post(handlers::auth::register))
         .route("/api/auth/login", post(handlers::auth::login))
-        .route("/api/auth/logout", post(handlers::auth::logout))
-        // Token 管理
+        .route("/api/auth/logout", post(handlers::auth::logout));
+
+    // 受保护的路由（需要认证）
+    let protected_routes = Router::new()
         .route("/api/tokens", get(handlers::token::list))
         .route("/api/tokens", post(handlers::token::create))
         .route("/api/tokens/:id", delete(handlers::token::revoke))
-        // 设备管理
         .route("/api/devices", get(handlers::device::list))
         .route("/api/devices", post(handlers::device::register))
         .route("/api/devices/:id", get(handlers::device::get))
         .route("/api/devices/:id", delete(handlers::device::delete))
         .route("/api/devices/:id", put(handlers::device::update_name))
-        // 同步 API（v1）
         .route("/api/v1/sync/status", get(handlers::sync::status))
         .route("/api/v1/sync/push", post(handlers::sync::push))
         .route("/api/v1/sync/pull", get(handlers::sync::pull))
         .route("/api/v1/sync/resolve", post(handlers::sync::resolve))
-        // 管理后台 API
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/stats", get(handlers::admin::stats))
+        .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));
+
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         // 前端静态文件（SPA fallback）
         .route("/*path", get(serve_static))
         .route("/", get(serve_static))

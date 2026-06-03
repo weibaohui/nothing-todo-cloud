@@ -43,7 +43,9 @@ fn get_embedded_file(path: &str) -> Option<Vec<u8>> {
 /// 获取文件 MIME 类型
 fn get_mime_type(path: &str) -> &'static str {
     let path = path.trim_start_matches('/');
-    if path.ends_with(".html") {
+    if path.is_empty() || path == "index.html" {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".html") {
         "text/html; charset=utf-8"
     } else if path.ends_with(".js") {
         "application/javascript"
@@ -62,8 +64,8 @@ fn get_mime_type(path: &str) -> &'static str {
 
 /// 前端静态文件服务（支持 SPA）
 async fn serve_static(path: String) -> impl IntoResponse {
+    let mime = get_mime_type(&path);
     if let Some(data) = get_embedded_file(&path) {
-        let mime = get_mime_type(&path);
         ([(axum::http::header::CONTENT_TYPE, mime)], data)
     } else {
         // 文件不存在，返回 index.html（SPA fallback）
@@ -133,7 +135,6 @@ fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/v1/sync/status", get(handlers::sync::status))
         .route("/api/v1/sync/push", post(handlers::sync::push))
         .route("/api/v1/sync/pull", get(handlers::sync::pull))
-        .route("/api/v1/sync/resolve", post(handlers::sync::resolve))
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/stats", get(handlers::admin::stats))
         .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));

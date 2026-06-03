@@ -1,0 +1,13 @@
+# ntd-cloud-server 配置文件
+# 开发环境使用
+
+server:
+  host: "0.0.0.0"
+  port: 8089
+
+database:
+  url: "sqlite:ntd_cloud.db"
+
+jwt:
+  secret: "dev-secret-change-in-production"
+  expiration_hours: 168  # 7 天

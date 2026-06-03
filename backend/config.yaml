@@ -6,7 +6,7 @@ server:
   port: 8089
 
 database:
-  url: "sqlite:ntd_cloud.db"
+  url: "sqlite:////Users/mac/projects/rust/nothing-todo-cloud/backend/ntd_cloud.db"
 
 jwt:
   secret: "dev-secret-change-in-production"

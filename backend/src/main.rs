@@ -7,6 +7,7 @@ mod error;
 mod handlers;
 mod middleware;
 mod services;
+mod state;
 
 use axum::{
     routing::{get, post, delete, put},
@@ -15,8 +16,11 @@ use axum::{
 };
 use rust_embed::Embed;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::state::AppState;
 
 /// 前端静态文件嵌入
 #[derive(Embed)]
@@ -58,13 +62,13 @@ fn get_mime_type(path: &str) -> &'static str {
 async fn serve_static(path: String) -> impl IntoResponse {
     if let Some(data) = get_embedded_file(&path) {
         let mime = get_mime_type(&path);
-        ([("Content-Type", mime)], data)
+        ([(axum::http::header::CONTENT_TYPE, mime)], data)
     } else {
         // 文件不存在，返回 index.html（SPA fallback）
         if let Some(data) = Assets::get("index.html") {
-            (("Content-Type", "text/html; charset=utf-8"), data.data.to_vec())
+            ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], data.data.to_vec())
         } else {
-            (("Content-Type", "text/plain"), b"Frontend not built".to_vec())
+            ([(axum::http::header::CONTENT_TYPE, "text/plain")], b"Frontend not built".to_vec())
         }
     }
 }
@@ -83,12 +87,15 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::load()?;
 
     // 初始化数据库
-    db::init(&config.database_url).await?;
+    let db = db::init(&config.database.url).await?;
 
     tracing::info!("数据库初始化完成");
 
+    // 创建应用状态
+    let state = Arc::new(state::AppState::new(db, config.clone()));
+
     // 构建路由
-    let app = build_app();
+    let app = build_app(state.clone());
 
     // 启动服务器
     let addr = SocketAddr::from(([0, 0, 0, 0], config.server.port));
@@ -100,7 +107,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn build_app() -> Router {
+fn build_app(state: Arc<AppState>) -> Router {
     // CORS 配置
     let cors = CorsLayer::permissive();
 
@@ -132,5 +139,6 @@ fn build_app() -> Router {
         // 前端静态文件（SPA fallback）
         .route("/*path", get(serve_static))
         .route("/", get(serve_static))
+        .with_state(state)
         .layer(cors)
 }

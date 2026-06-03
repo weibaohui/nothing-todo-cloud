@@ -33,6 +33,9 @@ pub enum AppError {
 
     #[error("JWT 错误: {0}")]
     Jwt(#[from] jsonwebtoken::errors::Error),
+
+    #[error("密码错误: {0}")]
+    Password(#[from] bcrypt::BcryptError),
 }
 
 impl IntoResponse for AppError {
@@ -51,6 +54,10 @@ impl IntoResponse for AppError {
             AppError::Jwt(e) => {
                 tracing::error!("JWT 错误: {:?}", e);
                 (StatusCode::UNAUTHORIZED, "Token 无效或已过期".to_string())
+            }
+            AppError::Password(e) => {
+                tracing::error!("密码错误: {:?}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, "密码处理失败".to_string())
             }
         };
 

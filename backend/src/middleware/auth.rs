@@ -9,7 +9,7 @@ use axum::{
 };
 
 /// JWT Claims 结构
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct Claims {
     /// 用户 ID
     pub sub: i64,

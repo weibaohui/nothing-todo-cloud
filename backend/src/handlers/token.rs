@@ -1,12 +1,20 @@
 //! Token 管理处理模块
 //! 处理 API Token 的创建、列表、撤销
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
+use crate::state::AppState;
 use axum::{
     extract::{Path, State},
     Json,
 };
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::Serialize;
+use std::sync::Arc;
+use uuid::Uuid;
+
+use crate::db::schema::ApiTokens;
+use crate::db::schema::api_token::Column as TokenColumn;
 
 #[derive(Debug, Serialize)]
 pub struct TokenResponse {
@@ -17,37 +25,85 @@ pub struct TokenResponse {
     pub created_at: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct CreateTokenRequest {
+    pub name: String,
+}
+
 /// 列出所有 Token
-pub async fn list() -> Result<Json<Vec<TokenResponse>>> {
-    // TODO: 从数据库查询用户的 Token 列表
-    Ok(Json(vec![]))
+pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<TokenResponse>>> {
+    let tokens = ApiTokens::find()
+        .filter(TokenColumn::UserId.eq(1)) // TODO: 从 JWT 获取用户 ID
+        .all(&state.db)
+        .await?;
+
+    let response: Vec<TokenResponse> = tokens
+        .into_iter()
+        .map(|t| TokenResponse {
+            id: t.id,
+            name: t.name,
+            token: None, // 不返回 token 哈希
+            last_used_at: t.last_used_at.map(|dt| dt.to_rfc3339()),
+            created_at: t.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(response))
 }
 
 /// 创建新 Token
 pub async fn create(
-    Json(req): Json<serde_json::Value>,
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateTokenRequest>,
 ) -> Result<Json<TokenResponse>> {
-    let name = req["name"].as_str().unwrap_or("Unnamed Token");
+    // 生成随机 Token
+    let raw_token = format!("ntd_{}", Uuid::new_v4());
+    let token_hash = hash_token(&raw_token);
 
-    // TODO: 生成随机 Token
-    // TODO: 哈希存储
-    // TODO: 返回明文 Token（仅此时可见）
+    tracing::info!("创建新 Token: {}", req.name);
 
-    tracing::info!("创建新 Token: {}", name);
+    let now = Utc::now();
+    let new_token = crate::db::schema::api_token::ActiveModel {
+        user_id: Set(1), // TODO: 从 JWT 获取用户 ID
+        name: Set(req.name.clone()),
+        token_hash: Set(token_hash),
+        created_at: Set(now),
+        ..Default::default()
+    };
+
+    let token = new_token.insert(&state.db).await?;
 
     Ok(Json(TokenResponse {
-        id: 1,
-        name: name.to_string(),
-        token: Some("ntd_cloud_xxx".to_string()),
+        id: token.id,
+        name: token.name,
+        token: Some(raw_token), // 仅创建时返回明文
         last_used_at: None,
-        created_at: "2026-01-01T00:00:00Z".to_string(),
+        created_at: token.created_at.to_rfc3339(),
     }))
 }
 
 /// 撤销 Token
-pub async fn revoke(Path(id): Path<i64>) -> Result<Json<serde_json::Value>> {
-    // TODO: 从数据库删除 Token
-    let _ = id;
+pub async fn revoke(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>> {
+    let token = ApiTokens::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Token 不存在".to_string()))?;
+
+    let active_model: crate::db::schema::api_token::ActiveModel = token.into();
+    active_model.delete(&state.db).await?;
+
     tracing::info!("撤销 Token: id={}", id);
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+/// 对 Token 进行哈希
+fn hash_token(token: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }

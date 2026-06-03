@@ -32,14 +32,8 @@ impl Config {
     /// 从配置文件加载配置
     /// 优先级：环境变量 > config.yaml
     pub fn load() -> anyhow::Result<Self> {
-        // 默认查找 backend/config.yaml
-        let config_path = if Path::new("config.yaml").exists() {
-            "config.yaml"
-        } else if Path::new("/etc/ntd-cloud/config.yaml").exists() {
-            "/etc/ntd-cloud/config.yaml"
-        } else {
-            "config.yaml"
-        };
+        // 直接使用绝对路径加载配置
+        let config_path = "/Users/mac/projects/rust/nothing-todo-cloud/backend/config.yaml";
 
         let settings = config::Config::builder()
             .add_source(config::File::with_name(config_path))
@@ -47,6 +41,7 @@ impl Config {
             .build()?;
 
         let config: Config = settings.try_deserialize()?;
+        eprintln!("数据库URL: {}", config.database.url);
         Ok(config)
     }
 }

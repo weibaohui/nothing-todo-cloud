@@ -2,15 +2,17 @@
 //! 处理用户注册、登录、登出
 
 use crate::error::{AppError, Result};
+use crate::state::AppState;
+use crate::services::auth_service::{generate_token, hash_password, verify_password};
 use axum::{
     extract::State,
     Json,
 };
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// 应用状态
-pub type AppState = Arc<()>;
+use crate::db::schema::Users;
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -33,7 +35,7 @@ pub struct AuthResponse {
 
 /// 用户注册
 pub async fn register(
-    State(_state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>> {
     // 验证邮箱格式
@@ -46,36 +48,77 @@ pub async fn register(
         return Err(AppError::BadRequest("密码长度至少 6 位".to_string()));
     }
 
-    // TODO: 密码哈希 + 存储到数据库
-    let password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)?;
+    // 密码哈希
+    let password_hash = hash_password(&req.password)?;
 
     tracing::info!("用户注册: {}", req.email);
 
-    // TODO: 插入数据库
+    // 检查邮箱是否已存在
+    let existing = Users::find()
+        .filter(crate::db::schema::user::Column::Email.eq(&req.email))
+        .one(&state.db)
+        .await?;
+
+    if existing.is_some() {
+        return Err(AppError::BadRequest("该邮箱已注册".to_string()));
+    }
+
+    // 创建用户
+    let new_user = crate::db::schema::user::ActiveModel {
+        email: Set(req.email.clone()),
+        password_hash: Set(password_hash),
+        plan: Set("free".to_string()),
+        ..Default::default()
+    };
+
+    let user = new_user.insert(&state.db).await?;
+
+    // 生成 JWT Token
+    let token = generate_token(
+        user.id,
+        None,
+        &state.config.jwt.secret,
+        state.config.jwt.expiration_hours,
+    )?;
 
     Ok(Json(AuthResponse {
         success: true,
-        token: Some("jwt-token-placeholder".to_string()),
-        user_id: Some(1),
+        token: Some(token),
+        user_id: Some(user.id),
     }))
 }
 
 /// 用户登录
 pub async fn login(
-    State(_state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>> {
-    // TODO: 验证邮箱密码
-    let _password_hash = bcrypt::hash(&req.password, bcrypt::DEFAULT_COST)?;
-
     tracing::info!("用户登录: {}", req.email);
 
-    // TODO: 生成 JWT Token
+    // 查找用户
+    let user = Users::find()
+        .filter(crate::db::schema::user::Column::Email.eq(&req.email))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("邮箱或密码错误".to_string()))?;
+
+    // 验证密码
+    if !verify_password(&req.password, &user.password_hash) {
+        return Err(AppError::Unauthorized("邮箱或密码错误".to_string()));
+    }
+
+    // 生成 JWT Token
+    let token = generate_token(
+        user.id,
+        None,
+        &state.config.jwt.secret,
+        state.config.jwt.expiration_hours,
+    )?;
 
     Ok(Json(AuthResponse {
         success: true,
-        token: Some("jwt-token-placeholder".to_string()),
-        user_id: Some(1),
+        token: Some(token),
+        user_id: Some(user.id),
     }))
 }
 

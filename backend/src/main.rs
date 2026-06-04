@@ -11,7 +11,7 @@ mod state;
 
 use axum::{
     http::Uri,
-    routing::{get, post, delete},
+    routing::{get, post, delete, put},
     Router,
     response::IntoResponse,
 };

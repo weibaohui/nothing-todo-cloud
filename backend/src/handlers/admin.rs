@@ -3,8 +3,8 @@
 
 use crate::error::Result;
 use crate::state::AppState;
-use axum::{extract::State, Json};
-use sea_orm::{EntityTrait, PaginatorTrait, QueryOrder, QuerySelect};
+use axum::{extract::{State, Path}, Json};
+use sea_orm::{EntityTrait, PaginatorTrait, QueryOrder, QuerySelect, ActiveModelTrait, Set};
 use serde::Serialize;
 use std::sync::Arc;
 

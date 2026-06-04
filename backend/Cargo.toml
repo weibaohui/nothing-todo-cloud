@@ -11,7 +11,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 
 # Frontend embedding
-rust-embed = "8"
+rust-embed = { version = "8", features = ["debug-embed"] }
 
 # Database
 sea-orm = { version = "0.12", features = ["runtime-tokio-native-tls", "macros", "sqlx-sqlite"] }

@@ -10,7 +10,8 @@ mod services;
 mod state;
 
 use axum::{
-    routing::{get, post, delete, put},
+    http::Uri,
+    routing::{get, post, delete},
     Router,
     response::IntoResponse,
 };
@@ -29,15 +30,11 @@ use crate::middleware::auth::auth_middleware;
 #[folder = "../frontend/dist"]
 struct Assets;
 
-/// 获取嵌入的前端文件
+/// 获取嵌入的前端文件（精确查找，不做 SPA fallback）
 fn get_embedded_file(path: &str) -> Option<Vec<u8>> {
-    // 尝试直接获取文件
+    // 去掉开头的 /，因为 rust-embed 使用相对路径
     let path = path.trim_start_matches('/');
-    if let Some(file) = Assets::get(path) {
-        return Some(file.data.to_vec());
-    }
-    // SPA 路由：返回 index.html
-    Assets::get("index.html").map(|f| f.data.to_vec())
+    Assets::get(path).map(|f| f.data.to_vec())
 }
 
 /// 获取文件 MIME 类型
@@ -63,7 +60,10 @@ fn get_mime_type(path: &str) -> &'static str {
 }
 
 /// 前端静态文件服务（支持 SPA）
-async fn serve_static(path: String) -> impl IntoResponse {
+async fn serve_static(uri: Uri) -> impl IntoResponse {
+    // 从请求 URI 中提取路径，去掉开头的 /
+    let path = uri.path().trim_start_matches('/').to_string();
+    tracing::debug!("static file request: path='{}'", &path);
     let mime = get_mime_type(&path);
     if let Some(data) = get_embedded_file(&path) {
         ([(axum::http::header::CONTENT_TYPE, mime)], data)
@@ -142,8 +142,8 @@ fn build_app(state: Arc<AppState>) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         // 前端静态文件（SPA fallback）
-        .route("/*path", get(serve_static))
         .route("/", get(serve_static))
+        .route("/*path", get(serve_static))
         .with_state(state)
         .layer(cors)
 }

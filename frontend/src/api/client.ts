@@ -55,6 +55,7 @@ export const admin = {
   stats: () => client.get('/admin/stats'),
   listUsers: () => client.get('/admin/users'),
   syncLogs: () => client.get('/admin/sync-logs'),
+  snapshots: () => client.get('/admin/snapshots'),
 };
 
 export default client;

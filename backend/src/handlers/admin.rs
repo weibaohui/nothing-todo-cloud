@@ -8,7 +8,7 @@ use sea_orm::{EntityTrait, PaginatorTrait, QueryOrder, QuerySelect};
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::db::schema::{Users, SyncLogs};
+use crate::db::schema::{Users, SyncLogs, UserSnapshots};
 
 #[derive(Debug, Serialize)]
 pub struct UserStats {
@@ -33,6 +33,16 @@ pub struct SyncLogEntry {
     pub action: String,
     pub status: String,
     pub details: Option<String>,
+    pub created_at: String,
+}
+
+/// 用户 Todo 数据
+#[derive(Debug, Serialize)]
+pub struct UserSnapshot {
+    pub id: i64,
+    pub user_id: i64,
+    pub data_type: String,
+    pub data_payload: String,
     pub created_at: String,
 }
 
@@ -83,6 +93,27 @@ pub async fn sync_logs(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Sy
             status: l.status,
             details: l.details,
             created_at: l.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+/// 获取用户快照列表（Todos 管理）
+pub async fn user_snapshots(State(state): State<Arc<AppState>>) -> Result<Json<Vec<UserSnapshot>>> {
+    let snapshots = UserSnapshots::find()
+        .order_by_desc(crate::db::schema::user_snapshot::Column::CreatedAt)
+        .all(&state.db)
+        .await?;
+
+    let response: Vec<UserSnapshot> = snapshots
+        .into_iter()
+        .map(|s| UserSnapshot {
+            id: s.id,
+            user_id: s.user_id,
+            data_type: s.data_type,
+            data_payload: s.data_payload,
+            created_at: s.created_at.to_rfc3339(),
         })
         .collect();
 

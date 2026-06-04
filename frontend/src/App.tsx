@@ -6,11 +6,13 @@ import {
   DashboardOutlined,
   KeyOutlined,
   SettingOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Tokens from './pages/Tokens';
 import Settings from './pages/Settings';
+import Snapshots from './pages/Snapshots';
 
 const { Header, Content, Sider } = Layout;
 
@@ -18,6 +20,7 @@ const { Header, Content, Sider } = Layout;
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '控制台' },
   { key: '/tokens',    icon: <KeyOutlined />,      label: 'Token 管理' },
+  { key: '/snapshots', icon: <FileTextOutlined />,   label: 'Todo 管理' },
   { key: '/settings',  icon: <SettingOutlined />,  label: '设置' },
 ];
 
@@ -73,6 +76,10 @@ const App: React.FC = () => {
           <Route
             path="/settings"
             element={isLoggedIn ? <AppLayout><Settings /></AppLayout> : <Navigate to="/login" />}
+          />
+          <Route
+            path="/snapshots"
+            element={isLoggedIn ? <AppLayout><Snapshots /></AppLayout> : <Navigate to="/login" />}
           />
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>

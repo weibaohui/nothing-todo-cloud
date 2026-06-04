@@ -118,6 +118,7 @@ fn build_app(state: Arc<AppState>) -> Router {
     // 公开路由（无需认证）
     let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .route("/livez", get(handlers::livez))
         .route("/api/auth/register", post(handlers::auth::register))
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/logout", post(handlers::auth::logout));

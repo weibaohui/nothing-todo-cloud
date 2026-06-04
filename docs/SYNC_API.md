@@ -334,11 +334,35 @@ curl -X POST /api/v1/sync/push \
 
 ## 健康检查
 
+### 服务健康检查
+
 ```
 GET /health
 ```
+
+返回服务状态信息。
 
 响应：
 ```json
 {"service":"nothing-todo-cloud","status":"ok"}
 ```
+
+### 存活探针 (Liveness Probe)
+
+```
+GET /livez
+```
+
+用于 Kubernetes livenessProbe 或负载均衡健康检查。
+仅验证服务可达，不涉及业务逻辑。
+返回 `200 OK` 即表示存活。
+
+响应：
+```
+OK
+```
+
+| 端点 | 用途 | 适用场景 |
+|------|------|----------|
+| `/health` | 服务状态 | 监控仪表盘、健康检查 |
+| `/livez` | 存活探针 | K8s livenessProbe、负载均衡 |

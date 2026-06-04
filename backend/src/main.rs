@@ -138,6 +138,8 @@ fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/admin/stats", get(handlers::admin::stats))
         .route("/api/admin/sync-logs", get(handlers::admin::sync_logs))
         .route("/api/admin/snapshots", get(handlers::admin::user_snapshots))
+        .route("/api/admin/snapshots/:id", delete(handlers::admin::delete_snapshot))
+        .route("/api/admin/snapshots/:id", put(handlers::admin::update_snapshot))
         .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     Router::new()

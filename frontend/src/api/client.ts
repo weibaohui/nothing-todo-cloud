@@ -56,6 +56,9 @@ export const admin = {
   listUsers: () => client.get('/admin/users'),
   syncLogs: () => client.get('/admin/sync-logs'),
   snapshots: () => client.get('/admin/snapshots'),
+  deleteSnapshot: (id: number) => client.delete(`/admin/snapshots/${id}`),
+  updateSnapshot: (id: number, dataPayload: string) =>
+    client.put(`/admin/snapshots/${id}`, { data_payload: dataPayload }),
 };
 
 export default client;

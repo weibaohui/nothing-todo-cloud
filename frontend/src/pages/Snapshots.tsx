@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Tag, Typography, Modal, Descriptions, Select, Empty, Button } from 'antd';
-import { FileTextOutlined, UserOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Typography, Modal, Descriptions, Select, Button, Popconfirm, message, Space } from 'antd';
+import { DeleteOutlined, EditOutlined, UserOutlined } from '@ant-design/icons';
 import { admin } from '../api/client';
 
 const { Text, Paragraph } = Typography;
@@ -25,9 +25,11 @@ const Snapshots: React.FC = () => {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState<number | null>(null);
-  const [detailModal, setDetailModal] = useState<Snapshot | null>(null);
+  const [editModal, setEditModal] = useState<Snapshot | null>(null);
+  const [editPayload, setEditPayload] = useState('');
 
-  useEffect(() => {
+  const loadData = () => {
+    setLoading(true);
     Promise.all([
       admin.listUsers(),
       admin.snapshots(),
@@ -38,6 +40,10 @@ const Snapshots: React.FC = () => {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   // 按用户筛选
@@ -51,7 +57,6 @@ const Snapshots: React.FC = () => {
     return user?.email || `用户 #${userId}`;
   };
 
-  // 解析 data_payload
   // 计算摘要
   const getSummary = (payload: string) => {
     const lines = payload.split('\n');
@@ -84,9 +89,36 @@ const Snapshots: React.FC = () => {
     return parts.join(', ') || '-';
   };
 
-  // 打开详情弹窗
-  const openDetail = (snapshot: Snapshot) => {
-    setDetailModal(snapshot);
+  // 打开编辑弹窗
+  const openEdit = (snapshot: Snapshot) => {
+    setEditModal(snapshot);
+    setEditPayload(snapshot.data_payload);
+  };
+
+  // 保存修改
+  const handleSave = () => {
+    if (!editModal) return;
+    admin.updateSnapshot(editModal.id, editPayload)
+      .then(() => {
+        message.success('保存成功');
+        setEditModal(null);
+        loadData();
+      })
+      .catch((err) => {
+        message.error('保存失败: ' + err.message);
+      });
+  };
+
+  // 删除快照
+  const handleDelete = (id: number) => {
+    admin.deleteSnapshot(id)
+      .then(() => {
+        message.success('删除成功');
+        loadData();
+      })
+      .catch((err) => {
+        message.error('删除失败: ' + err.message);
+      });
   };
 
   const columns = [
@@ -130,16 +162,34 @@ const Snapshots: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 80,
+      width: 150,
       render: (_: any, record: Snapshot) => (
-        <Button
-          type="link"
-          size="small"
-          icon={<FileTextOutlined />}
-          onClick={() => openDetail(record)}
-        >
-          详情
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(record)}
+          >
+            编辑
+          </Button>
+          <Popconfirm
+            title="确定删除此快照?"
+            onConfirm={() => handleDelete(record.id)}
+            okText="删除"
+            cancelText="取消"
+            okType="danger"
+          >
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+            >
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -178,38 +228,41 @@ const Snapshots: React.FC = () => {
           loading={loading}
           size="small"
           pagination={{ pageSize: 20, showSizeChanger: false }}
-          locale={{
-            emptyText: <Empty description="暂无数据" />,
-          }}
         />
       </Card>
 
-      {/* 详情弹窗 */}
+      {/* 编辑弹窗 */}
       <Modal
-        title={`${detailModal?.data_type === 'todos' ? 'Todo' : detailModal?.data_type === 'tags' ? 'Tag' : 'Skill'} 数据详情`}
-        open={!!detailModal}
-        onCancel={() => setDetailModal(null)}
-        footer={null}
+        title="编辑数据"
+        open={!!editModal}
+        onCancel={() => setEditModal(null)}
+        onOk={handleSave}
+        okText="保存"
+        cancelText="取消"
         width={700}
       >
-        {detailModal && (
+        {editModal && (
           <>
             <Descriptions column={2} bordered size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="ID">{detailModal.id}</Descriptions.Item>
-              <Descriptions.Item label="用户">{getUserEmail(detailModal.user_id)}</Descriptions.Item>
+              <Descriptions.Item label="ID">{editModal.id}</Descriptions.Item>
+              <Descriptions.Item label="用户">{getUserEmail(editModal.user_id)}</Descriptions.Item>
               <Descriptions.Item label="数据类型">
-                <Tag>{detailModal.data_type}</Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="更新时间">
-                {new Date(detailModal.created_at).toLocaleString('zh-CN')}
+                <Tag>{editModal.data_type}</Tag>
               </Descriptions.Item>
             </Descriptions>
-
-            <Card title="完整数据" size="small">
-              <Paragraph copyable style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                {detailModal.data_payload}
-              </Paragraph>
-            </Card>
+            <Text strong>数据内容 (YAML 格式):</Text>
+            <Paragraph>
+              <textarea
+                value={editPayload}
+                onChange={(e) => setEditPayload(e.target.value)}
+                style={{
+                  width: '100%',
+                  minHeight: 300,
+                  fontFamily: 'monospace',
+                  marginTop: 8,
+                }}
+              />
+            </Paragraph>
           </>
         )}
       </Modal>

@@ -119,3 +119,49 @@ pub async fn user_snapshots(State(state): State<Arc<AppState>>) -> Result<Json<V
 
     Ok(Json(response))
 }
+
+/// 删除快照
+pub async fn delete_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>> {
+    let snapshot = UserSnapshots::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| crate::error::AppError::NotFound("快照不存在".to_string()))?;
+
+    let model: crate::db::schema::user_snapshot::ActiveModel = snapshot.into();
+    model.delete(&state.db).await?;
+
+    Ok(Json(serde_json::json!({ "success": true, "id": id })))
+}
+
+/// 修改快照
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateSnapshotRequest {
+    pub data_payload: String,
+}
+
+pub async fn update_snapshot(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateSnapshotRequest>,
+) -> Result<Json<UserSnapshot>> {
+    let snapshot = UserSnapshots::find_by_id(id)
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| crate::error::AppError::NotFound("快照不存在".to_string()))?;
+
+    let mut model: crate::db::schema::user_snapshot::ActiveModel = snapshot.into();
+    model.data_payload = Set(req.data_payload);
+
+    let updated = model.update(&state.db).await?;
+
+    Ok(Json(UserSnapshot {
+        id: updated.id,
+        user_id: updated.user_id,
+        data_type: updated.data_type,
+        data_payload: updated.data_payload,
+        created_at: updated.created_at.to_rfc3339(),
+    }))
+}

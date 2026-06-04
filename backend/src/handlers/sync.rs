@@ -260,12 +260,27 @@ pub async fn push(
     };
     new_snapshot.insert(&state.db).await?;
 
-    // 记录同步日志
+    // 记录同步日志（含数据摘要）
+    let todo_titles: Vec<&str> = merged.todos.iter().map(|t| t.title.as_str()).collect();
+    let title_summary = if todo_titles.len() <= 3 {
+        todo_titles.join(", ")
+    } else {
+        format!("{} 等{}项", todo_titles[..3].join(", "), todo_titles.len())
+    };
+    let detail_summary = format!(
+        "data_type={}, todos={}, tags={}, skills={} | {}",
+        req.data_type,
+        merged.todos.len(),
+        merged.tags.len(),
+        merged.skills.len(),
+        title_summary,
+    );
+
     let sync_log = crate::db::schema::sync_log::ActiveModel {
         user_id: Set(user_id),
         action: Set("push".to_string()),
         status: Set("success".to_string()),
-        details: Set(Some(format!("data_type={}", req.data_type))),
+        details: Set(Some(detail_summary)),
         created_at: Set(now),
         ..Default::default()
     };

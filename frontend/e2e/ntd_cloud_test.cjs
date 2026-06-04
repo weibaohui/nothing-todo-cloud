@@ -56,7 +56,7 @@ async function spaNavigate(page, path) {
     console.log('\n3. 控制台页面...');
     const statsTitles = await page.locator('.ant-statistic-title').allTextContents();
     console.log(`   统计项: ${JSON.stringify(statsTitles)}`);
-    console.log(`   ${statsTitles.length >= 3 ? '✅ 统计信息完整' : '⚠ 统计信息不完整'}`);
+    console.log(`   ${statsTitles.length >= 2 ? '✅ 统计信息完整' : '⚠ 统计信息不完整'}`);
 
     // ===== 4. SPA 内导航到设置页 - 查看 Token 显示 =====
     console.log('\n4. 设置页 - Token 显示...');

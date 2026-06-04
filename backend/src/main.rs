@@ -136,6 +136,7 @@ fn build_app(state: Arc<AppState>) -> Router {
         // 管理后台
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/stats", get(handlers::admin::stats))
+        .route("/api/admin/sync-logs", get(handlers::admin::sync_logs))
         .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     Router::new()

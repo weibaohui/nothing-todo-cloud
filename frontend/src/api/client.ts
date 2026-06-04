@@ -54,6 +54,7 @@ export const devices = {
 export const admin = {
   stats: () => client.get('/admin/stats'),
   listUsers: () => client.get('/admin/users'),
+  syncLogs: () => client.get('/admin/sync-logs'),
 };
 
 export default client;

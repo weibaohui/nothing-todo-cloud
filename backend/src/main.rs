@@ -125,17 +125,15 @@ fn build_app(state: Arc<AppState>) -> Router {
 
     // 受保护的路由（需要认证）
     let protected_routes = Router::new()
+        // Token 管理
         .route("/api/tokens", get(handlers::token::list))
         .route("/api/tokens", post(handlers::token::create))
         .route("/api/tokens/:id", delete(handlers::token::revoke))
-        .route("/api/devices", get(handlers::device::list))
-        .route("/api/devices", post(handlers::device::register))
-        .route("/api/devices/:id", get(handlers::device::get))
-        .route("/api/devices/:id", delete(handlers::device::delete))
-        .route("/api/devices/:id", put(handlers::device::update_name))
+        // 同步 API（无需 device_id）
         .route("/api/v1/sync/status", get(handlers::sync::status))
         .route("/api/v1/sync/push", post(handlers::sync::push))
         .route("/api/v1/sync/pull", get(handlers::sync::pull))
+        // 管理后台
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/stats", get(handlers::admin::stats))
         .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));

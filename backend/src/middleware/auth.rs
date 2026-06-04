@@ -1,24 +1,27 @@
 //! JWT 认证中间件
-//! 验证请求头中的 Bearer Token，提取 user_id 和 device_id
+//! 支持两种 Token：
+//! 1. JWT Token - 登录 Token，用于创建 API Token
+//! 2. API Token - ntd_xxx 格式，存储在 api_tokens 表中
 
 use crate::error::AppError;
 use crate::services::auth_service::Claims;
 use crate::state::AppState;
 use axum::{
     extract::{Request, State},
-    http::{header::AUTHORIZATION, StatusCode},
+    http::header::AUTHORIZATION,
     middleware::Next,
     response::Response,
 };
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::sync::Arc;
 
-/// 从请求中提取并验证 JWT Token
+/// 从请求中提取并验证 Token
+/// 支持 JWT Token 和 API Token
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    // 从 Authorization Header 提取 Token
     let token = req
         .headers()
         .get(AUTHORIZATION)
@@ -26,35 +29,53 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(|| AppError::Unauthorized("缺少认证 Token".to_string()))?;
 
-    // 验证 JWT
-    let claims = crate::services::auth_service::verify_token(token, &state.config.jwt.secret)
+    let claims = verify_token(token, &state).await
         .map_err(|_| AppError::Unauthorized("Token 无效或已过期".to_string()))?;
 
-    // 将 Claims 注入到请求扩展中
     req.extensions_mut().insert(claims);
-
     Ok(next.run(req).await)
 }
 
-/// 可选认证（不强制要求 Token 存在）
-pub async fn optional_auth_middleware(
-    State(state): State<Arc<AppState>>,
-    mut req: Request,
-    next: Next,
-) -> Response {
-    // 如果有 Token 就验证，没有就继续
-    let claims = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| {
-            crate::services::auth_service::verify_token(token, &state.config.jwt.secret).ok()
-        });
-
-    if let Some(claims) = claims {
-        req.extensions_mut().insert(claims);
+/// 验证 Token
+/// 1. 先尝试 JWT 验证
+/// 2. 如果是 ntd_xxx 格式，查询 api_tokens 表验证
+async fn verify_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppError> {
+    // 1. 尝试 JWT 验证
+    if let Ok(claims) = crate::services::auth_service::verify_token(token, &state.config.jwt.secret) {
+        return Ok(claims);
     }
 
-    next.run(req).await
+    // 2. 尝试 API Token 验证 (ntd_xxx 格式)
+    if token.starts_with("ntd_") {
+        return verify_api_token(token, state).await;
+    }
+
+    Err(AppError::Unauthorized("Token 无效".to_string()))
+}
+
+/// 验证 API Token
+async fn verify_api_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppError> {
+    use crate::db::schema::ApiTokens;
+    use crate::db::schema::api_token::Column as TokenColumn;
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // 计算 token 的哈希
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    let token_hash = format!("{:x}", hasher.finish());
+
+    // 查找 token
+    let api_token = ApiTokens::find()
+        .filter(TokenColumn::TokenHash.eq(&token_hash))
+        .one(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("Token 不存在".to_string()))?;
+
+    Ok(Claims {
+        sub: api_token.user_id,
+        device_id: Some(api_token.id),  // 用 token 的 id 作为 device_id
+        token_type: "api".to_string(),
+        exp: 0,  // API Token 没有过期时间
+    })
 }

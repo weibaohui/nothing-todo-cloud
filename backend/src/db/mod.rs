@@ -68,20 +68,19 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
-    // 创建 device_snapshots 表
+    // 创建 user_snapshots 表（替代 device_snapshots，按用户存储）
     db.execute(Statement::from_string(
         DatabaseBackend::Sqlite,
         r#"
-        CREATE TABLE IF NOT EXISTS device_snapshots (
+        CREATE TABLE IF NOT EXISTS user_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id INTEGER NOT NULL,
-            version INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             data_type TEXT NOT NULL,
             data_payload TEXT NOT NULL,
             checksum TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             metadata TEXT,
-            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+            UNIQUE(user_id, data_type)
         )
         "#,
     ))
@@ -93,12 +92,11 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
         r#"
         CREATE TABLE IF NOT EXISTS sync_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             action TEXT NOT NULL,
             status TEXT NOT NULL,
             details TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         "#,
     ))

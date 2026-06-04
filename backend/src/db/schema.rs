@@ -4,11 +4,11 @@
 pub mod user;
 pub mod device;
 pub mod api_token;
-pub mod device_snapshot;
+pub mod user_snapshot;
 pub mod sync_log;
 
 pub use user::Entity as Users;
 pub use device::Entity as Devices;
 pub use api_token::Entity as ApiTokens;
-pub use device_snapshot::Entity as DeviceSnapshots;
+pub use user_snapshot::Entity as UserSnapshots;
 pub use sync_log::Entity as SyncLogs;

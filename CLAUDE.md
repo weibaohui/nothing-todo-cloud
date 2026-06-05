@@ -139,6 +139,33 @@ cd frontend && npx playwright test --reporter=list
 2. 使用 Playwright 编写测试脚本验证 UI 效果
 3. 验证通过后再通知用户
 
+### 前端嵌入机制与构建顺序
+
+**问题根因**：`rust-embed` 是在 Rust 编译时从 `frontend/dist` 目录读取文件并嵌入二进制。如果不按顺序构建，前端代码不会更新。
+
+**正确的前端修改流程**：
+```bash
+# 方法1：使用 make（推荐）
+make build && make dev
+
+# 方法2：手动分步
+cd frontend && npm run build   # 1. 先构建前端（生成 dist/）
+make dev                        # 2. 启动后端（自动嵌入 frontend/dist/）
+
+# 如果只改了后端代码
+make dev
+```
+
+**常见错误**：
+- ❌ 只修改前端代码后直接 `cargo build` → 嵌入的是旧的 dist 内容
+- ❌ 只运行 `npm run dev`（开发服务器）而没有构建 → dist 未更新
+- ❌ 启动旧的 cargo 进程 → 运行的还是旧二进制
+
+**开发建议**：
+- 如果只改前端样式/组件：执行 `npm run build` 后 `cargo build` 即可
+- 如果改了前端又改后端：确保按上述顺序执行
+- 修改前端后**必须重新编译后端**才能看到效果（除非用 `npm run dev` 单独跑前端服务）
+
 ## 移动端 UI 开发规范
 
 ### ⚠️ 移动端禁止使用的组件

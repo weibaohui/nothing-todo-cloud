@@ -10,7 +10,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
   Card, Tag, Typography, Modal, Form, Input, Select, Switch, Button,
-  Popconfirm, message, Space, Drawer, Radio, List, Flex, Badge, Empty, Tooltip
+  message, Space, Drawer, Radio, List, Flex, Badge, Empty, Tooltip
 } from 'antd';
 import {
   DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined,
@@ -227,24 +227,17 @@ const Todos: React.FC = () => {
           >
             编辑
           </Button>,
-          <Popconfirm
+          <Button
             key="delete"
-            title="确定删除此 Todo？"
-            description="删除后无法恢复"
-            onConfirm={() => handleDelete(todo.id)}
-            okText="删除"
-            okType="danger"
+            type="text"
+            size="small"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={(e) => { e.stopPropagation(); setDeleteConfirm(todo.id); }}
+            style={{ borderRadius: 'var(--radius-sm)' }}
           >
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              style={{ borderRadius: 'var(--radius-sm)' }}
-            >
-              删除
-            </Button>
-          </Popconfirm>,
+            删除
+          </Button>,
         ]}
       >
         <List.Item.Meta
@@ -503,21 +496,14 @@ const Todos: React.FC = () => {
           >
             编辑
           </Button>
-          <Popconfirm
-            title="确定删除此 Todo？"
-            description="删除后无法恢复"
-            onConfirm={() => { handleDelete(todo.id); setDetailDrawer(null); }}
-            okText="删除"
-            okType="danger"
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => { setDetailDrawer(null); setDeleteConfirm(todo.id); }}
+            style={{ borderRadius: 'var(--radius-md)' }}
           >
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              style={{ borderRadius: 'var(--radius-md)' }}
-            >
-              删除
-            </Button>
-          </Popconfirm>
+            删除
+          </Button>
         </Flex>
       </Space>
     );
@@ -761,6 +747,28 @@ const Todos: React.FC = () => {
                   )}
                 </Flex>
               )}
+              {/* 桌面端卡片操作按钮 */}
+              <Flex gap={4} style={{ marginTop: 12 }}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={(e) => { e.stopPropagation(); openEdit(todo); }}
+                  style={{ borderRadius: 'var(--radius-sm)' }}
+                >
+                  编辑
+                </Button>
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={(e) => { e.stopPropagation(); setDeleteConfirm(todo.id); }}
+                  style={{ borderRadius: 'var(--radius-sm)' }}
+                >
+                  删除
+                </Button>
+              </Flex>
             </Card>
           ))}
         </div>

@@ -1,5 +1,7 @@
 use sea_orm::entity::prelude::*;
 
+/// API Token 实体模型
+/// 用于设备认证，存储 token 的哈希值（安全存储，明文 token 只在创建时返回一次）
 #[derive(Clone, Debug, DeriveEntityModel, Eq, PartialEq)]
 #[sea_orm(table_name = "api_tokens")]
 pub struct Model {
@@ -9,7 +11,7 @@ pub struct Model {
     pub user_id: i64,
     pub name: String,
     #[sea_orm(column_name = "token_hash")]
-    pub token_hash: String,
+    pub token_hash: String, // 存储 token 的哈希值，用于鉴权
     #[sea_orm(column_name = "last_used_at")]
     pub last_used_at: Option<DateTimeUtc>,
     #[sea_orm(column_name = "created_at")]

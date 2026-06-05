@@ -6,6 +6,7 @@ pub mod auth;
 pub mod device;
 pub mod sync;
 pub mod token;
+pub mod todo;
 
 use axum::Json;
 use serde_json::json;

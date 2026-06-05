@@ -133,13 +133,18 @@ fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/v1/sync/status", get(handlers::sync::status))
         .route("/api/v1/sync/push", post(handlers::sync::push))
         .route("/api/v1/sync/pull", get(handlers::sync::pull))
+        // Todo 管理（独立条目）
+        .route("/api/todos", get(handlers::todo::list_todos))
+        .route("/api/todos", post(handlers::todo::create_todo))
+        .route("/api/todos/import", post(handlers::todo::import_data))
+        .route("/api/todos/tags", get(handlers::todo::list_tags))
+        .route("/api/todos/:id", get(handlers::todo::get_todo))
+        .route("/api/todos/:id", put(handlers::todo::update_todo))
+        .route("/api/todos/:id", delete(handlers::todo::delete_todo))
         // 管理后台
         .route("/api/admin/users", get(handlers::admin::list_users))
         .route("/api/admin/stats", get(handlers::admin::stats))
         .route("/api/admin/sync-logs", get(handlers::admin::sync_logs))
-        .route("/api/admin/snapshots", get(handlers::admin::user_snapshots))
-        .route("/api/admin/snapshots/:id", delete(handlers::admin::delete_snapshot))
-        .route("/api/admin/snapshots/:id", put(handlers::admin::update_snapshot))
         .layer(axum_middleware::from_fn_with_state(state.clone(), auth_middleware));
 
     Router::new()

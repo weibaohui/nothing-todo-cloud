@@ -57,17 +57,10 @@ async fn verify_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppE
 async fn verify_api_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppError> {
     use crate::db::schema::ApiTokens;
     use crate::db::schema::api_token::Column as TokenColumn;
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
 
-    // 计算 token 的哈希
-    let mut hasher = DefaultHasher::new();
-    token.hash(&mut hasher);
-    let token_hash = format!("{:x}", hasher.finish());
-
-    // 查找 token
+    // 直接查找 token（开发调试模式：存储原始 token）
     let api_token = ApiTokens::find()
-        .filter(TokenColumn::TokenHash.eq(&token_hash))
+        .filter(TokenColumn::Token.eq(token))
         .one(&state.db)
         .await?
         .ok_or_else(|| AppError::Unauthorized("Token 不存在".to_string()))?;

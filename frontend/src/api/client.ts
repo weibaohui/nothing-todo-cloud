@@ -55,10 +55,17 @@ export const admin = {
   stats: () => client.get('/admin/stats'),
   listUsers: () => client.get('/admin/users'),
   syncLogs: () => client.get('/admin/sync-logs'),
-  snapshots: () => client.get('/admin/snapshots'),
-  deleteSnapshot: (id: number) => client.delete(`/admin/snapshots/${id}`),
-  updateSnapshot: (id: number, dataPayload: string) =>
-    client.put(`/admin/snapshots/${id}`, { data_payload: dataPayload }),
+};
+
+export const todos = {
+  list: () => client.get('/todos'),
+  get: (id: number) => client.get(`/todos/${id}`),
+  create: (data: any) => client.post('/todos', data),
+  update: (id: number, data: any) => client.put(`/todos/${id}`, data),
+  delete: (id: number) => client.delete(`/todos/${id}`),
+  tags: () => client.get('/todos/tags'),
+  import: (yamlData: string, mode: string) =>
+    client.post('/todos/import', { yaml_data: yamlData, mode }),
 };
 
 export default client;

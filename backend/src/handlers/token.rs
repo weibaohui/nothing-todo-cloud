@@ -21,7 +21,7 @@ use crate::db::schema::api_token::Column as TokenColumn;
 pub struct TokenResponse {
     pub id: i64,
     pub name: String,
-    pub token: Option<String>, // 仅创建时返回完整 token
+    pub token: Option<String>, // 列表时返回，创建时返回完整 token
     pub last_used_at: Option<String>,
     pub created_at: String,
 }
@@ -41,12 +41,13 @@ pub async fn list(
         .all(&state.db)
         .await?;
 
+    // 开发调试模式：返回完整 token
     let response: Vec<TokenResponse> = tokens
         .into_iter()
         .map(|t| TokenResponse {
             id: t.id,
             name: t.name,
-            token: None, // 不返回 token 哈希
+            token: Some(t.token), // 返回存储的原始 token
             last_used_at: t.last_used_at.map(|dt| dt.to_rfc3339()),
             created_at: t.created_at.to_rfc3339(),
         })
@@ -63,7 +64,6 @@ pub async fn create(
 ) -> Result<Json<TokenResponse>> {
     // 生成随机 Token
     let raw_token = format!("ntd_{}", Uuid::new_v4());
-    let token_hash = hash_token(&raw_token);
 
     tracing::info!("创建新 Token: {} for user {}", req.name, claims.sub);
 
@@ -71,7 +71,7 @@ pub async fn create(
     let new_token = crate::db::schema::api_token::ActiveModel {
         user_id: Set(claims.sub),
         name: Set(req.name.clone()),
-        token_hash: Set(token_hash),
+        token: Set(raw_token.clone()), // 存储原始 token（开发调试用）
         created_at: Set(now),
         ..Default::default()
     };
@@ -81,7 +81,7 @@ pub async fn create(
     Ok(Json(TokenResponse {
         id: token.id,
         name: token.name,
-        token: Some(raw_token), // 仅创建时返回明文
+        token: Some(raw_token), // 返回明文 token
         last_used_at: None,
         created_at: token.created_at.to_rfc3339(),
     }))
@@ -108,13 +108,4 @@ pub async fn revoke(
 
     tracing::info!("撤销 Token: id={}", id);
     Ok(Json(serde_json::json!({ "success": true })))
-}
-
-/// 对 Token 进行哈希
-fn hash_token(token: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    token.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
 }

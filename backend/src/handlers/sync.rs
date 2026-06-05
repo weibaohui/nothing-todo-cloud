@@ -1,9 +1,8 @@
 //! 同步核心处理模块
-//! 采用服务器端合并策略：按标题合并，数据按用户存储
-//! 请求和响应都使用 YAML 格式
+//! 同步时直接解析 YAML 并存入分立表（user_todos, user_tags, user_skills）
+//! 不存储快照，请求和响应都使用 YAML 格式
 
-use crate::db::schema::UserSnapshots;
-use crate::db::schema::user_snapshot::Column as SnapshotColumn;
+use crate::db::schema::{UserTodos, UserTags, UserSkills};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::services::auth_service::Claims;
@@ -14,35 +13,20 @@ use axum::{
 use chrono::Utc;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 // ============ 请求/响应结构 ============
 
-/// 冲突解决模式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ConflictMode {
-    Overwrite,
-    Skip,
-    Rename,
-}
-
-impl Default for ConflictMode {
-    fn default() -> Self {
-        ConflictMode::Overwrite
-    }
-}
-
-/// Push 请求（无需 device_id，从 token 自动获取）
+/// Push 请求
 #[derive(Debug, Deserialize)]
 pub struct PushRequest {
     pub data_type: String,
     pub data: String,
     /// 冲突解决模式：overwrite(默认) | skip | rename
     #[serde(default)]
-    pub conflict_mode: Option<ConflictMode>,
-    /// Dry run 模式：不实际执行，只返回预览结果
+    pub conflict_mode: Option<String>,
+    /// Dry run 模式
     #[serde(default)]
     pub dry_run: Option<bool>,
 }
@@ -51,38 +35,6 @@ pub struct PushRequest {
 pub struct PushResponse {
     pub success: bool,
     pub merged_data: String,
-}
-
-/// Dry run 预览响应
-#[derive(Debug, Serialize)]
-pub struct PreviewResponse {
-    pub success: bool,
-    pub preview: bool,
-    pub conflict_mode: String,
-    pub merged_data: String,
-    pub conflicts: Vec<ConflictPreview>,
-    pub summary: PreviewSummary,
-}
-
-/// 单个冲突的预览信息
-#[derive(Debug, Serialize)]
-pub struct ConflictPreview {
-    pub title: String,
-    pub action: String,
-    pub server_item: Option<Box<TodoItem>>,
-    pub client_item: TodoItem,
-    pub new_title: Option<String>,
-}
-
-/// 预览统计摘要
-#[derive(Debug, Serialize)]
-pub struct PreviewSummary {
-    pub total_client_items: usize,
-    pub new_items: usize,
-    pub overwritten: usize,
-    pub skipped: usize,
-    pub renamed: usize,
-    pub final_total: usize,
 }
 
 /// Pull 请求
@@ -124,12 +76,6 @@ pub struct TodoItem {
     pub workspace: Option<String>,
     #[serde(default)]
     pub worktree: Option<String>,
-    #[serde(default)]
-    pub done: Option<bool>,
-    #[serde(default)]
-    pub created_at: Option<String>,
-    #[serde(default)]
-    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -157,14 +103,10 @@ pub async fn status(
     let data_type = params.data_type.unwrap_or_else(|| "todos".to_string());
     let user_id = claims.sub;
 
-    let latest = find_user_snapshot(&state.db, user_id, &data_type).await;
-
-    let last_sync_at = latest
-        .map(|s| s.created_at.to_rfc3339())
-        .unwrap_or_default();
+    let latest = find_latest_time(&state.db, user_id, &data_type).await;
+    let last_sync_at = latest.unwrap_or_default();
 
     let response = SyncStatus { last_sync_at };
-
     let yaml = serde_yaml::to_string(&response).unwrap_or_default();
     Ok((
         [("Content-Type", "text/yaml; charset=utf-8")],
@@ -181,17 +123,13 @@ pub async fn push(
     let req: PushRequest = serde_yaml::from_str(&body)
         .map_err(|e| AppError::BadRequest(format!("YAML解析失败: {}", e)))?;
 
-    let conflict_mode = req.conflict_mode.unwrap_or_default();
+    let conflict_mode = req.conflict_mode.unwrap_or_else(|| "overwrite".to_string());
     let dry_run = req.dry_run.unwrap_or(false);
     let user_id = claims.sub;
 
     tracing::info!(
-        "Push 请求: user_id={}, data_type={}, data_len={}, conflict_mode={:?}, dry_run={}",
-        user_id,
-        req.data_type,
-        req.data.len(),
-        conflict_mode,
-        dry_run
+        "Push 请求: user_id={}, data_type={}, conflict_mode={}, dry_run={}",
+        user_id, req.data_type, conflict_mode, dry_run
     );
 
     let now = Utc::now();
@@ -199,92 +137,30 @@ pub async fn push(
     let client_data: SyncData = serde_yaml::from_str(&req.data)
         .map_err(|e| AppError::BadRequest(format!("数据YAML解析失败: {}", e)))?;
 
-    let server_data = if let Some(snapshot) = find_user_snapshot(&state.db, user_id, &req.data_type).await {
-        serde_yaml::from_str(&snapshot.data_payload).unwrap_or_default()
-    } else {
-        SyncData::default()
-    };
-
-    // Dry run 模式
+    // Dry run 模式 - 返回预览
     if dry_run {
-        let (merged, conflicts) = merge_data_with_preview(server_data, client_data.clone(), &req.data_type, conflict_mode);
+        let server_data = load_user_data(&state.db, user_id, &req.data_type).await;
+        let merged = merge_data(server_data, client_data, &req.data_type, &conflict_mode);
         let merged_yaml = serde_yaml::to_string(&merged)
-            .map_err(|e| AppError::Internal(format!("YAML序列化失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("序列化失败: {}", e)))?;
 
-        let total_client_items = client_data.todos.len();
-        let new_items = conflicts.iter().filter(|c| c.action != "skip").count();
-        let overwritten = conflicts.iter().filter(|c| c.action == "overwrite").count();
-        let skipped = conflicts.iter().filter(|c| c.action == "skip").count();
-        let renamed = conflicts.iter().filter(|c| c.action == "rename").count();
-
-        let preview_response = PreviewResponse {
-            success: true,
-            preview: true,
-            conflict_mode: format!("{:?}", conflict_mode).to_lowercase(),
-            merged_data: merged_yaml,
-            conflicts,
-            summary: PreviewSummary {
-                total_client_items,
-                new_items,
-                overwritten,
-                skipped,
-                renamed,
-                final_total: merged.todos.len(),
-            },
-        };
-
-        let yaml = serde_yaml::to_string(&preview_response)
-            .map_err(|e| AppError::Internal(format!("YAML序列化失败: {}", e)))?;
         return Ok((
             [("Content-Type", "text/yaml; charset=utf-8")],
-            yaml,
+            serde_yaml::to_string(&serde_json::json!({
+                "success": true,
+                "preview": true,
+                "merged_data": merged_yaml,
+            })).unwrap_or_default(),
         ));
     }
 
-    let merged = merge_data(server_data, client_data, &req.data_type, conflict_mode);
+    // 实际同步：直接存入分立表
+    save_user_data(&state.db, user_id, &req.data_type, &client_data, &conflict_mode, now).await?;
 
-    let merged_yaml = serde_yaml::to_string(&merged)
-        .map_err(|e| AppError::Internal(format!("YAML序列化失败: {}", e)))?;
-
-    // 删除旧快照
-    delete_user_snapshots(&state.db, user_id, &req.data_type).await?;
-
-    // 存储新快照
-    let new_snapshot = crate::db::schema::user_snapshot::ActiveModel {
-        user_id: Set(user_id),
-        data_type: Set(req.data_type.clone()),
-        data_payload: Set(merged_yaml.clone()),
-        checksum: Set(String::new()),
-        created_at: Set(now),
-        ..Default::default()
-    };
-    new_snapshot.insert(&state.db).await?;
-
-    // 记录同步日志（含数据摘要）
-    let todo_titles: Vec<&str> = merged.todos.iter().map(|t| t.title.as_str()).collect();
-    let title_summary = if todo_titles.len() <= 3 {
-        todo_titles.join(", ")
-    } else {
-        format!("{} 等{}项", todo_titles[..3].join(", "), todo_titles.len())
-    };
-    let detail_summary = format!(
-        "data_type={}, todos={}, tags={}, skills={} | {}",
-        req.data_type,
-        merged.todos.len(),
-        merged.tags.len(),
-        merged.skills.len(),
-        title_summary,
-    );
-
-    let sync_log = crate::db::schema::sync_log::ActiveModel {
-        user_id: Set(user_id),
-        action: Set("push".to_string()),
-        status: Set("success".to_string()),
-        details: Set(Some(detail_summary)),
-        created_at: Set(now),
-        ..Default::default()
-    };
-    sync_log.insert(&state.db).await?;
+    // 返回当前所有数据
+    let server_data = load_user_data(&state.db, user_id, &req.data_type).await;
+    let merged_yaml = serde_yaml::to_string(&server_data)
+        .map_err(|e| AppError::Internal(format!("序列化失败: {}", e)))?;
 
     let response = PushResponse {
         success: true,
@@ -309,11 +185,8 @@ pub async fn pull(
 
     tracing::info!("Pull 请求: user_id={}, data_type={}", user_id, data_type);
 
-    let (data, updated_at) = if let Some(snapshot) = find_user_snapshot(&state.db, user_id, &data_type).await {
-        (snapshot.data_payload, snapshot.created_at.to_rfc3339())
-    } else {
-        (String::new(), String::new())
-    };
+    let data = load_user_data_yaml(&state.db, user_id, &data_type).await;
+    let updated_at = find_latest_time(&state.db, user_id, &data_type).await.unwrap_or_default();
 
     let response = PullResponse {
         data_type,
@@ -328,166 +201,287 @@ pub async fn pull(
     ))
 }
 
-// ============ 辅助函数 ============
+// ============ 数据库操作 ============
 
-/// 查找用户最新快照
-async fn find_user_snapshot(
+/// 加载用户数据
+async fn load_user_data(
     db: &sea_orm::DatabaseConnection,
     user_id: i64,
     data_type: &str,
-) -> Option<crate::db::schema::user_snapshot::Model> {
-    UserSnapshots::find()
-        .filter(SnapshotColumn::UserId.eq(user_id))
-        .filter(SnapshotColumn::DataType.eq(data_type))
-        .order_by_desc(crate::db::schema::user_snapshot::Column::CreatedAt)
-        .one(db)
-        .await
-        .ok()
-        .flatten()
+) -> SyncData {
+    match data_type {
+        "todos" => {
+            let todos = UserTodos::find()
+                .filter(crate::db::schema::user_todo::Column::UserId.eq(user_id))
+                .all(db)
+                .await
+                .unwrap_or_default();
+            SyncData {
+                todos: todos
+                    .into_iter()
+                    .map(|t| TodoItem {
+                        title: t.title,
+                        prompt: t.prompt,
+                        status: t.status,
+                        executor: t.executor,
+                        scheduler_enabled: t.scheduler_enabled.map(|v| v == 1),
+                        scheduler_config: t.scheduler_config,
+                        tag_names: t.tag_names.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default(),
+                        workspace: t.workspace,
+                        worktree: t.worktree,
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+        }
+        "tags" => {
+            let tags = UserTags::find()
+                .filter(crate::db::schema::user_tag::Column::UserId.eq(user_id))
+                .all(db)
+                .await
+                .unwrap_or_default();
+            SyncData {
+                tags: tags.into_iter().map(|t| t.name).collect(),
+                ..Default::default()
+            }
+        }
+        "skills" => {
+            let skills = UserSkills::find()
+                .filter(crate::db::schema::user_skill::Column::UserId.eq(user_id))
+                .all(db)
+                .await
+                .unwrap_or_default();
+            SyncData {
+                skills: skills.into_iter().map(|s| s.name).collect(),
+                ..Default::default()
+            }
+        }
+        _ => SyncData::default(),
+    }
 }
 
-/// 删除用户快照
-async fn delete_user_snapshots(
+/// 加载用户数据为 YAML 字符串
+async fn load_user_data_yaml(
     db: &sea_orm::DatabaseConnection,
     user_id: i64,
     data_type: &str,
-) -> Result<(), AppError> {
-    let snapshots = UserSnapshots::find()
-        .filter(SnapshotColumn::UserId.eq(user_id))
-        .filter(SnapshotColumn::DataType.eq(data_type))
-        .all(db)
-        .await?;
+) -> String {
+    let data = load_user_data(db, user_id, data_type).await;
+    serde_yaml::to_string(&data).unwrap_or_default()
+}
 
-    for old in snapshots {
-        let model: crate::db::schema::user_snapshot::ActiveModel = old.into();
-        model.delete(db).await?;
+/// 保存用户数据（合并模式）
+async fn save_user_data(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i64,
+    data_type: &str,
+    data: &SyncData,
+    conflict_mode: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), AppError> {
+    match data_type {
+        "todos" => {
+            // 获取现有数据
+            let existing = UserTodos::find()
+                .filter(crate::db::schema::user_todo::Column::UserId.eq(user_id))
+                .all(db)
+                .await?;
+            let mut existing_map: std::collections::HashMap<String, _> = existing
+                .into_iter()
+                .map(|t| (t.title.clone(), t))
+                .collect();
+
+            for todo in &data.todos {
+                if let Some(existing) = existing_map.get(&todo.title) {
+                    match conflict_mode {
+                        "skip" => continue,
+                        "rename" => {
+                            // 生成新标题
+                            let mut counter = 1;
+                            let mut new_title = format!("{} ({})", todo.title, counter);
+                            while existing_map.contains_key(&new_title) {
+                                counter += 1;
+                                new_title = format!("{} ({})", todo.title, counter);
+                            }
+                            insert_todo(db, user_id, todo, &new_title, now).await?;
+                        }
+                        _ => {
+                            // overwrite: 更新现有记录
+                            update_todo(db, &existing.id, todo, now).await?;
+                        }
+                    }
+                } else {
+                    insert_todo(db, user_id, todo, &todo.title, now).await?;
+                }
+                existing_map.remove(&todo.title);
+            }
+        }
+        "tags" => {
+            for tag in &data.tags {
+                let existing = UserTags::find()
+                    .filter(crate::db::schema::user_tag::Column::UserId.eq(user_id))
+                    .filter(crate::db::schema::user_tag::Column::Name.eq(tag))
+                    .one(db)
+                    .await?;
+                if existing.is_none() {
+                    let model = crate::db::schema::user_tag::ActiveModel {
+                        user_id: Set(user_id),
+                        name: Set(tag.clone()),
+                        created_at: Set(now),
+                        ..Default::default()
+                    };
+                    model.insert(db).await?;
+                }
+            }
+        }
+        "skills" => {
+            for skill in &data.skills {
+                let existing = UserSkills::find()
+                    .filter(crate::db::schema::user_skill::Column::UserId.eq(user_id))
+                    .filter(crate::db::schema::user_skill::Column::Name.eq(skill))
+                    .one(db)
+                    .await?;
+                if existing.is_none() {
+                    let model = crate::db::schema::user_skill::ActiveModel {
+                        user_id: Set(user_id),
+                        name: Set(skill.clone()),
+                        created_at: Set(now),
+                        ..Default::default()
+                    };
+                    model.insert(db).await?;
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
 
-/// 合并数据
-fn merge_data(server: SyncData, client: SyncData, data_type: &str, mode: ConflictMode) -> SyncData {
+async fn insert_todo(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i64,
+    todo: &TodoItem,
+    title: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), AppError> {
+    let tag_names_json = serde_json::to_string(&todo.tag_names).unwrap_or_default();
+    let sched_enabled = todo.scheduler_enabled.unwrap_or(false);
+
+    let model = crate::db::schema::user_todo::ActiveModel {
+        user_id: Set(user_id),
+        title: Set(title.to_string()),
+        prompt: Set(todo.prompt.clone()),
+        status: Set(todo.status.clone()),
+        executor: Set(todo.executor.clone()),
+        scheduler_enabled: Set(Some(if sched_enabled { 1 } else { 0 })),
+        scheduler_config: Set(todo.scheduler_config.clone()),
+        tag_names: Set(Some(tag_names_json)),
+        workspace: Set(todo.workspace.clone()),
+        worktree: Set(todo.worktree.clone()),
+        created_at: Set(now),
+        updated_at: Set(Some(now)),
+        ..Default::default()
+    };
+    model.insert(db).await?;
+    Ok(())
+}
+
+async fn update_todo(
+    db: &sea_orm::DatabaseConnection,
+    id: &i64,
+    todo: &TodoItem,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), AppError> {
+    let existing = UserTodos::find()
+        .filter(crate::db::schema::user_todo::Column::Id.eq(*id))
+        .one(db)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Todo 不存在".to_string()))?;
+
+    let mut model: crate::db::schema::user_todo::ActiveModel = existing.into();
+    let tag_names_json = serde_json::to_string(&todo.tag_names).unwrap_or_default();
+    let sched_enabled = todo.scheduler_enabled.unwrap_or(false);
+
+    model.prompt = Set(todo.prompt.clone());
+    model.status = Set(todo.status.clone());
+    model.executor = Set(todo.executor.clone());
+    model.scheduler_enabled = Set(Some(if sched_enabled { 1 } else { 0 }));
+    model.scheduler_config = Set(todo.scheduler_config.clone());
+    model.tag_names = Set(Some(tag_names_json));
+    model.workspace = Set(todo.workspace.clone());
+    model.worktree = Set(todo.worktree.clone());
+    model.updated_at = Set(Some(now));
+
+    model.update(db).await?;
+    Ok(())
+}
+
+/// 查找最新更新时间
+async fn find_latest_time(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i64,
+    data_type: &str,
+) -> Option<String> {
     match data_type {
-        "todos" => {
-            let mut server_titles: HashMap<String, TodoItem> = HashMap::new();
-            for todo in &server.todos {
-                server_titles.insert(todo.title.clone(), todo.clone());
-            }
-
-            let mut merged_todos: Vec<TodoItem> = server.todos.clone();
-            let mut used_titles: HashSet<String> = server_titles.keys().cloned().collect();
-
-            for client_todo in &client.todos {
-                if server_titles.contains_key(&client_todo.title) {
-                    match mode {
-                        ConflictMode::Overwrite => {
-                            if let Some(pos) = merged_todos.iter().position(|t| t.title == client_todo.title) {
-                                merged_todos[pos] = client_todo.clone();
-                            }
-                        }
-                        ConflictMode::Skip => {}
-                        ConflictMode::Rename => {
-                            let new_title = generate_unique_title(&client_todo.title, &used_titles);
-                            let mut renamed = client_todo.clone();
-                            renamed.title = new_title.clone();
-                            used_titles.insert(new_title);
-                            merged_todos.push(renamed);
-                        }
-                    }
-                } else {
-                    merged_todos.push(client_todo.clone());
-                    used_titles.insert(client_todo.title.clone());
-                }
-            }
-
-            SyncData {
-                version: server.version.or(client.version).or(Some("1.0".to_string())),
-                created_at: Some(Utc::now().to_rfc3339()),
-                todos: merged_todos,
-                tags: merge_string_vecs(server.tags, client.tags),
-                skills: merge_string_vecs(server.skills, client.skills),
-            }
-        }
-        "tags" => {
-            SyncData {
-                version: server.version.or(client.version).or(Some("1.0".to_string())),
-                created_at: Some(Utc::now().to_rfc3339()),
-                todos: vec![],
-                tags: merge_string_vecs(server.tags, client.tags),
-                skills: vec![],
-            }
-        }
-        "skills" => {
-            SyncData {
-                version: server.version.or(client.version).or(Some("1.0".to_string())),
-                created_at: Some(Utc::now().to_rfc3339()),
-                todos: vec![],
-                tags: vec![],
-                skills: merge_string_vecs(server.skills, client.skills),
-            }
-        }
-        _ => client,
+        "todos" => UserTodos::find()
+            .filter(crate::db::schema::user_todo::Column::UserId.eq(user_id))
+            .order_by_desc(crate::db::schema::user_todo::Column::CreatedAt)
+            .one(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.created_at.to_rfc3339()),
+        "tags" => UserTags::find()
+            .filter(crate::db::schema::user_tag::Column::UserId.eq(user_id))
+            .order_by_desc(crate::db::schema::user_tag::Column::CreatedAt)
+            .one(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.created_at.to_rfc3339()),
+        "skills" => UserSkills::find()
+            .filter(crate::db::schema::user_skill::Column::UserId.eq(user_id))
+            .order_by_desc(crate::db::schema::user_skill::Column::CreatedAt)
+            .one(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.created_at.to_rfc3339()),
+        _ => None,
     }
 }
 
-/// 带预览的合并
-fn merge_data_with_preview(
-    server: SyncData,
-    client: SyncData,
-    data_type: &str,
-    mode: ConflictMode,
-) -> (SyncData, Vec<ConflictPreview>) {
-    let mut conflicts = Vec::new();
+// ============ 合并逻辑 ============
 
+fn merge_data(server: SyncData, client: SyncData, data_type: &str, mode: &str) -> SyncData {
     match data_type {
         "todos" => {
-            let mut server_titles: HashMap<String, TodoItem> = HashMap::new();
+            let mut server_titles: std::collections::HashMap<String, TodoItem> = std::collections::HashMap::new();
             for todo in &server.todos {
                 server_titles.insert(todo.title.clone(), todo.clone());
             }
 
-            let mut merged_todos: Vec<TodoItem> = server.todos.clone();
+            let mut merged_todos = server.todos.clone();
             let mut used_titles: HashSet<String> = server_titles.keys().cloned().collect();
 
             for client_todo in &client.todos {
                 if server_titles.contains_key(&client_todo.title) {
-                    let server_item = server_titles.get(&client_todo.title).cloned();
                     match mode {
-                        ConflictMode::Overwrite => {
-                            conflicts.push(ConflictPreview {
-                                title: client_todo.title.clone(),
-                                action: "overwrite".to_string(),
-                                server_item: server_item.map(Box::new),
-                                client_item: client_todo.clone(),
-                                new_title: None,
-                            });
+                        "overwrite" => {
                             if let Some(pos) = merged_todos.iter().position(|t| t.title == client_todo.title) {
                                 merged_todos[pos] = client_todo.clone();
                             }
                         }
-                        ConflictMode::Skip => {
-                            conflicts.push(ConflictPreview {
-                                title: client_todo.title.clone(),
-                                action: "skip".to_string(),
-                                server_item: server_item.map(Box::new),
-                                client_item: client_todo.clone(),
-                                new_title: None,
-                            });
-                        }
-                        ConflictMode::Rename => {
+                        "skip" => {}
+                        "rename" => {
                             let new_title = generate_unique_title(&client_todo.title, &used_titles);
-                            conflicts.push(ConflictPreview {
-                                title: client_todo.title.clone(),
-                                action: "rename".to_string(),
-                                server_item: server_item.map(Box::new),
-                                client_item: client_todo.clone(),
-                                new_title: Some(new_title.clone()),
-                            });
                             let mut renamed = client_todo.clone();
                             renamed.title = new_title.clone();
                             used_titles.insert(new_title);
                             merged_todos.push(renamed);
                         }
+                        _ => {}
                     }
                 } else {
                     merged_todos.push(client_todo.clone());
@@ -495,24 +489,23 @@ fn merge_data_with_preview(
                 }
             }
 
-            (SyncData {
-                version: server.version.or(client.version).or(Some("1.0".to_string())),
-                created_at: Some(Utc::now().to_rfc3339()),
+            SyncData {
+                version: Some("1.0".to_string()),
                 todos: merged_todos,
-                tags: merge_string_vecs(server.tags, client.tags),
-                skills: merge_string_vecs(server.skills, client.skills),
-            }, conflicts)
+                ..Default::default()
+            }
         }
-        "tags" | "skills" => {
-            (SyncData {
-                version: server.version.or(client.version).or(Some("1.0".to_string())),
-                created_at: Some(Utc::now().to_rfc3339()),
-                todos: vec![],
-                tags: if data_type == "tags" { merge_string_vecs(server.tags, client.tags) } else { vec![] },
-                skills: if data_type == "skills" { merge_string_vecs(server.skills, client.skills) } else { vec![] },
-            }, conflicts)
-        }
-        _ => (client, conflicts),
+        "tags" => SyncData {
+            version: Some("1.0".to_string()),
+            tags: merge_string_vec(server.tags, client.tags),
+            ..Default::default()
+        },
+        "skills" => SyncData {
+            version: Some("1.0".to_string()),
+            skills: merge_string_vec(server.skills, client.skills),
+            ..Default::default()
+        },
+        _ => client,
     }
 }
 
@@ -527,9 +520,9 @@ fn generate_unique_title(base_title: &str, used_titles: &HashSet<String>) -> Str
     }
 }
 
-fn merge_string_vecs(server: Vec<String>, client: Vec<String>) -> Vec<String> {
+fn merge_string_vec(server: Vec<String>, client: Vec<String>) -> Vec<String> {
     let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
-    set.extend(server.clone());
-    set.extend(client.clone());
+    set.extend(server);
+    set.extend(client);
     set.into_iter().collect()
 }

@@ -8,8 +8,8 @@ pub struct Model {
     #[sea_orm(column_name = "user_id")]
     pub user_id: i64,
     pub name: String,
-    #[sea_orm(column_name = "token_hash")]
-    pub token_hash: String,
+    #[sea_orm(column_name = "token")]
+    pub token: String, // 开发调试用：存储原始 token
     #[sea_orm(column_name = "last_used_at")]
     pub last_used_at: Option<DateTimeUtc>,
     #[sea_orm(column_name = "created_at")]

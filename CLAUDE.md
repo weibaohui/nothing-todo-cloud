@@ -139,6 +139,27 @@ cd frontend && npx playwright test --reporter=list
 2. 使用 Playwright 编写测试脚本验证 UI 效果
 3. 验证通过后再通知用户
 
+## 移动端 UI 开发规范
+
+### ⚠️ 移动端禁止使用的组件
+
+**Ant Design 的 `Popconfirm`、`Tooltip` 等依赖鼠标事件的组件在移动端触摸无反应，禁止使用。**
+
+- Popconfirm → 使用 Modal 替代
+- Tooltip → 使用 Popover 替代或在详情页展示
+
+### 移动端开发注意事项
+
+1. **触摸目标大小**：按钮最小 44x44 像素（符合 Apple HIG 标准）
+2. **测试要求**：移动端功能必须用**真实手机设备**测试，不能只靠 Playwright 自动化测试
+3. **组件选择**：优先使用 Ant Design Mobile 或原生触摸事件
+4. **构建后重启**：前端代码修改后必须重新 `cargo build` 嵌入最新前端代码
+
+### 已记录的问题
+
+- [UI 问题修复记录](./docs/UI_FIXES.md) - 记录已解决的移动端兼容性问题
+
 ## 相关文档
 
 - [同步系统设计文档](./docs/SYNC_DESIGN.md) - 详细的 API、数据模型、同步流程设计
+- [UI 问题修复记录](./docs/UI_FIXES.md) - 移动端兼容性问题及解决方案

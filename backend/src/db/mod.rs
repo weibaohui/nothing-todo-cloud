@@ -59,7 +59,7 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            token_hash TEXT NOT NULL,
+            token TEXT NOT NULL,
             last_used_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -68,19 +68,84 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
-    // 创建 user_snapshots 表（替代 device_snapshots，按用户存储）
+    // 迁移：检查是否有旧的 token_hash 列，如有则迁移数据并删除
+    let has_hash_column = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='api_tokens' AND sql LIKE '%token_hash%'",
+        ))
+        .await
+        .is_ok();
+
+    if has_hash_column {
+        // 添加新列 token（如果不存在）
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "ALTER TABLE api_tokens ADD COLUMN token TEXT",
+        ))
+        .await
+        .ok();
+
+        // 复制 token_hash 的值到 token 列（格式化为 ntd_id 作为占位符）
+        db.execute(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "UPDATE api_tokens SET token = 'ntd_' || id WHERE token IS NULL OR token = ''",
+        ))
+        .await
+        .ok();
+
+        tracing::info!("已迁移 api_tokens 表：token_hash -> token");
+    }
+
+    // 创建 user_todos 表
     db.execute(Statement::from_string(
         DatabaseBackend::Sqlite,
         r#"
-        CREATE TABLE IF NOT EXISTS user_snapshots (
+        CREATE TABLE IF NOT EXISTS user_todos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            data_type TEXT NOT NULL,
-            data_payload TEXT NOT NULL,
-            checksum TEXT NOT NULL,
+            title TEXT NOT NULL,
+            prompt TEXT,
+            status TEXT DEFAULT 'pending',
+            executor TEXT,
+            scheduler_enabled INTEGER DEFAULT 0,
+            scheduler_config TEXT,
+            tag_names TEXT,
+            workspace TEXT,
+            worktree TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            metadata TEXT,
-            UNIQUE(user_id, data_type)
+            updated_at TEXT,
+            UNIQUE(user_id, title)
+        )
+        "#,
+    ))
+    .await?;
+
+    // 创建 user_tags 表
+    db.execute(Statement::from_string(
+        DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS user_tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
+        )
+        "#,
+    ))
+    .await?;
+
+    // 创建 user_skills 表
+    db.execute(Statement::from_string(
+        DatabaseBackend::Sqlite,
+        r#"
+        CREATE TABLE IF NOT EXISTS user_skills (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
         )
         "#,
     ))

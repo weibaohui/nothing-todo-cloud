@@ -424,14 +424,18 @@ async fn find_latest_time(
     data_type: &str,
 ) -> Option<String> {
     match data_type {
-        "todos" => UserTodos::find()
-            .filter(crate::db::schema::user_todo::Column::UserId.eq(user_id))
-            .order_by_desc(crate::db::schema::user_todo::Column::CreatedAt)
-            .one(db)
-            .await
-            .ok()
-            .flatten()
-            .map(|t| t.created_at.to_rfc3339()),
+        "todos" => {
+            // 优先使用 updated_at（编辑会更新时间），再回退到 created_at
+            let result = UserTodos::find()
+                .filter(crate::db::schema::user_todo::Column::UserId.eq(user_id))
+                .order_by_desc(crate::db::schema::user_todo::Column::UpdatedAt)
+                .one(db)
+                .await;
+            match result {
+                Ok(Some(t)) => Some(t.updated_at.unwrap_or(t.created_at).to_rfc3339()),
+                _ => None,
+            }
+        }
         "tags" => UserTags::find()
             .filter(crate::db::schema::user_tag::Column::UserId.eq(user_id))
             .order_by_desc(crate::db::schema::user_tag::Column::CreatedAt)

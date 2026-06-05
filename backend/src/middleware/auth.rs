@@ -53,22 +53,33 @@ async fn verify_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppE
     Err(AppError::Unauthorized("Token 无效".to_string()))
 }
 
-/// 验证 API Token
+/// 验证 API Token（通过哈希比对）
 async fn verify_api_token(token: &str, state: &Arc<AppState>) -> Result<Claims, AppError> {
     use crate::db::schema::ApiTokens;
     use crate::db::schema::api_token::Column as TokenColumn;
 
-    // 直接查找 token（开发调试模式：存储原始 token）
+    // 对传入的 token 进行哈希，然后比对存储的哈希值
+    let token_hash = hash_token(token);
+
     let api_token = ApiTokens::find()
-        .filter(TokenColumn::Token.eq(token))
+        .filter(TokenColumn::TokenHash.eq(&token_hash))
         .one(&state.db)
         .await?
-        .ok_or_else(|| AppError::Unauthorized("Token 不存在".to_string()))?;
+        .ok_or_else(|| AppError::Unauthorized("Token 无效".to_string()))?;
 
     Ok(Claims {
         sub: api_token.user_id,
-        device_id: Some(api_token.id),  // 用 token 的 id 作为 device_id
+        device_id: Some(api_token.id),
         token_type: "api".to_string(),
-        exp: 0,  // API Token 没有过期时间
+        exp: 0,
     })
+}
+
+/// 对 Token 进行哈希
+fn hash_token(token: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }

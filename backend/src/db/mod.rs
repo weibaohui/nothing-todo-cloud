@@ -51,7 +51,7 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
-    // 创建 api_tokens 表
+    // 创建 api_tokens 表（使用 token_hash 存储）
     db.execute(Statement::from_string(
         DatabaseBackend::Sqlite,
         r#"
@@ -59,7 +59,7 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            token TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
             last_used_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -68,33 +68,33 @@ async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
     ))
     .await?;
 
-    // 迁移：检查是否有旧的 token_hash 列，如有则迁移数据并删除
-    let has_hash_column = db
+    // 迁移：如果存在旧的 token 明文字段，迁移到 token_hash
+    // 检查 token 列是否存在
+    let has_plain_token = db
         .query_one(Statement::from_string(
             DatabaseBackend::Sqlite,
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='api_tokens' AND sql LIKE '%token_hash%'",
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='api_tokens' AND sql LIKE '%token TEXT%' AND sql NOT LIKE '%token_hash%'",
         ))
-        .await
-        .is_ok();
+        .await?;
 
-    if has_hash_column {
-        // 添加新列 token（如果不存在）
+    if let Some(_row) = has_plain_token {
+        // 添加 token_hash 列
         db.execute(Statement::from_string(
             DatabaseBackend::Sqlite,
-            "ALTER TABLE api_tokens ADD COLUMN token TEXT",
+            "ALTER TABLE api_tokens ADD COLUMN token_hash TEXT",
         ))
         .await
         .ok();
 
-        // 复制 token_hash 的值到 token 列（格式化为 ntd_id 作为占位符）
+        // 将 token 明文复制到 token_hash（这只是占位符，实际需要用户重新创建 Token）
         db.execute(Statement::from_string(
             DatabaseBackend::Sqlite,
-            "UPDATE api_tokens SET token = 'ntd_' || id WHERE token IS NULL OR token = ''",
+            "UPDATE api_tokens SET token_hash = 'ntd_' || id WHERE token_hash IS NULL OR token_hash = ''",
         ))
         .await
         .ok();
 
-        tracing::info!("已迁移 api_tokens 表：token_hash -> token");
+        info!("已迁移 api_tokens 表：token 明文 -> token_hash（用户需重新创建 Token）");
     }
 
     // 创建 user_todos 表

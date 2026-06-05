@@ -356,14 +356,14 @@ const Todos: React.FC = () => {
               </Flex>
             </div>
           </Flex>
-          {/* 移动端操作按钮 - 增大触摸目标 */}
+          {/* 移动端操作按钮 */}
           <Flex gap={8}>
             <Button
               type="text"
               size="middle"
               icon={<EditOutlined />}
               onClick={(e) => { e.stopPropagation(); openEdit(todo); }}
-              style={{ minWidth: 44, minHeight: 44, borderRadius: 'var(--radius-md)' }}
+              style={{ borderRadius: 'var(--radius-md)' }}
             />
             <Button
               type="text"
@@ -371,7 +371,7 @@ const Todos: React.FC = () => {
               danger
               icon={<DeleteOutlined />}
               onClick={(e) => { e.stopPropagation(); setDeleteConfirm(todo.id); }}
-              style={{ minWidth: 44, minHeight: 44, borderRadius: 'var(--radius-md)' }}
+              style={{ borderRadius: 'var(--radius-md)' }}
             />
           </Flex>
         </Flex>

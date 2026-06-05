@@ -14,8 +14,9 @@ tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 rust-embed = { version = "8", features = ["debug-embed"] }
 
 # Database
-sea-orm = { version = "0.12", features = ["runtime-tokio-native-tls", "macros", "sqlx-sqlite"] }
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite"] }
+sea-orm = { version = "0.12", features = ["runtime-tokio-rustls", "macros", "sqlx-sqlite", "with-chrono", "with-json"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+libsqlite3-sys = { version = "0.27", features = ["bundled"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

@@ -1,6 +1,6 @@
 # nothing-todo-cloud
 
-ntd-cloud 是 **nothing-todo** 的云端同步服务器，提供 Todo 数据的云端存储和多设备同步功能。
+ntd-cloud 是 [nothing-todo](https://github.com/weibaohui/nothing-todo) 的云端同步服务器，提供 Todo 数据的云端存储和多设备同步功能。
 
 ## 功能特性
 
